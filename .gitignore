@@ -1,6 +1,7 @@
 # Temp
 *.yml
 *.pem
+bot_persistence.pickle
 test/
 # vscode environment
 .vscode/

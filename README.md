@@ -5,7 +5,7 @@
 一个简单的项目，让 Crisp 客服系统支持透过 Telegram Bot 来快速回复。  
 使用反馈、功能定制可加群：[https://t.me/dyaogroup](https://t.me/dyaogroup)
 
-Python 版本需求 >= 3.9
+Python 版本需求 >= 3.9，推荐 Python 3.14 以兼容 Debian 13 部署。
 
 ## 现有功能
 - 基于 Crisp 客服系统
@@ -31,6 +31,78 @@ nano config.yml
 # 根据注释中的内容修改配置
 python3 bot.py
 ```
+
+## Debian 13 / Python 3.14 部署
+
+```bash
+sudo apt update
+sudo apt install -y git python3 python3-venv python3-pip
+git clone https://github.com/chrisvorer6/Crisp-TG-Bot.git
+cd Crisp-TG-Bot
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+cp config.yml.example config.yml
+nano config.yml
+python bot.py
+```
+
+如果使用 systemd 常驻运行，可创建 `/etc/systemd/system/crisp-telegram-bot.service`：
+
+```ini
+[Unit]
+Description=Crisp Telegram Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/Crisp-TG-Bot
+ExecStart=/opt/Crisp-TG-Bot/.venv/bin/python /opt/Crisp-TG-Bot/bot.py
+Restart=always
+RestartSec=5
+User=crispbot
+Group=crispbot
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
+```
+
+启用服务：
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now crisp-telegram-bot
+sudo journalctl -u crisp-telegram-bot -f
+```
+
+同一个 Telegram Bot Token 只能运行一个 polling 实例。迁移服务器前，请先停止旧实例，否则会出现 `Conflict: terminated by other getUpdates request`。
+
+### 网络栈配置
+
+默认配置会优先尝试 IPv4，同时保留 IPv6 作为兜底：
+
+```yaml
+network:
+  preferIPv4: true
+```
+
+如果你的 Debian 13 服务器 IPv6 路由质量更好，可以设置为 `false`，让系统按默认 DNS 结果选择连接地址。
+
+### OpenAI 自动回复配置
+
+未配置 `openai.apiKey` 时，AI 自动回复会自动禁用，人工客服转发不受影响。
+
+```yaml
+openai:
+  apiKey:
+  baseUrl: "https://api.openai.com/v1"
+  model: "gpt-4o-mini"
+```
+
+如果使用兼容 OpenAI API 的代理或第三方端点，可以修改 `baseUrl` 和 `model`。
 
 ## 申请 Telegram Bot Token
 

@@ -9,8 +9,11 @@
 #     done
 #     result=`echo -e "${str}"`
 # }
-AUTOREPLY=`echo -e "${AUTOREPLY}"`
-OPENAI_PAYLOAD=`echo -e "${OPENAI_PAYLOAD}"`
+AUTOREPLY=`printf '%b' "${AUTOREPLY}"`
+OPENAI_PAYLOAD=`printf '%b' "${OPENAI_PAYLOAD}"`
+NETWORK_PREFER_IPV4=${NETWORK_PREFER_IPV4:-true}
+OPENAI_BASEURL=${OPENAI_BASEURL:-https://api.openai.com/v1}
+OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
 
 # if [ ! -e "/Crisp-Telegram-Bot/config.yml" ]; then
 # conver_to_array ${BOT_SEND_ID}
@@ -18,6 +21,8 @@ cat > /Crisp-Telegram-Bot/config.yml << EOF
 bot:
   token: ${BOT_TOKEN}
   groupId: ${BOT_GROUPID}
+network:
+  preferIPv4: ${NETWORK_PREFER_IPV4}
 crisp:
   id: ${CRISP_ID}
   key: ${CRISP_KEY}
@@ -29,6 +34,8 @@ autoreply:
 ${AUTOREPLY}
 openai:
   apiKey: ${OPENAI_APIKEY}
+  baseUrl: ${OPENAI_BASEURL}
+  model: ${OPENAI_MODEL}
   payload: |
 ${OPENAI_PAYLOAD}
 EOF

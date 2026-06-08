@@ -1,10 +1,10 @@
 import bot
-import json
 import base64
 import socketio
 import requests
 import logging
 import asyncio
+import time
 from telegram.ext import ContextTypes
 from telegram.error import BadRequest
 
@@ -14,9 +14,18 @@ openai = bot.openai
 changeButton = bot.changeButton
 groupId = config["bot"]["groupId"]
 websiteId = config["crisp"]["website"]
-payload = config["openai"]["payload"]
+payload = config.get("openai", {}).get("payload", "")
+openai_model = config.get("openai", {}).get("model", "gpt-4o-mini")
 
 logger = logging.getLogger(__name__)
+session_locks = {}
+
+def get_session_lock(session_id):
+    lock = session_locks.get(session_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        session_locks[session_id] = lock
+    return lock
 
 def getKey(content: str):
     if len(config.get("autoreply", {})) > 0:
@@ -48,73 +57,92 @@ def getMetas(sessionId):
     
     return '无额外信息'
 
-async def createSession(data):
-    bot_obj = callbackContext.bot
-    bot_data = callbackContext.bot_data
+async def rebuildTopic(bot_obj, bot_data, session_id, session, nickname, metas):
+    enableAI = session.get("enableAI", False if openai is None else True)
+    topic = await bot_obj.create_forum_topic(groupId, nickname)
+    msg = await bot_obj.send_message(
+        groupId,
+        metas,
+        message_thread_id=topic.message_thread_id,
+        reply_markup=changeButton(session_id, enableAI)
+    )
+    bot_data[session_id] = {
+        **session,
+        'topicId': topic.message_thread_id,
+        'messageId': msg.message_id,
+        'enableAI': enableAI,
+        'nickname': nickname,
+        'last_activity': time.time()
+    }
+    return bot_data[session_id]
+
+async def createSession(context, data):
+    bot_obj = context.bot
+    bot_data = context.bot_data
     session_id = data["session_id"]
     session = bot_data.get(session_id)
 
-    metas = getMetas(session_id)
+    metas = await asyncio.to_thread(getMetas, session_id)
     if session is None:
-        enableAI = False if openai is None else True
         try:
+            session = {}
             nickname = data.get("user", {}).get("nickname", "未知用户")
-            topic = await bot_obj.create_forum_topic(groupId, nickname)
-            msg = await bot_obj.send_message(
-                groupId,
-                metas,
-                message_thread_id=topic.message_thread_id,
-                reply_markup=changeButton(session_id, enableAI)
-            )
-            bot_data[session_id] = {
-                'topicId': topic.message_thread_id,
-                'messageId': msg.message_id,
-                'enableAI': enableAI,
-                'nickname': nickname
-            }
+            await rebuildTopic(bot_obj, bot_data, session_id, session, nickname, metas)
         except Exception as e:
             logger.error(f"Create Topic Error: {e}")
     else:
+        session.setdefault('last_activity', time.time())
         try:
-            await bot_obj.edit_message_text(metas, groupId, session['messageId'])
+            await bot_obj.edit_message_text(
+                metas,
+                groupId,
+                session['messageId'],
+                reply_markup=changeButton(session_id, session.get("enableAI", False if openai is None else True))
+            )
         except BadRequest as e:
             if "Message is not modified" not in str(e):
                 logger.error(f"Edit Message Error: {e}")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Edit Message Unknown Error: {e}")
 
-async def sendMessage(data):
-    bot_obj = callbackContext.bot
-    bot_data = callbackContext.bot_data
+async def sendMessage(context, data):
+    bot_obj = context.bot
+    bot_data = context.bot_data
     session_id = data["session_id"]
     session = bot_data.get(session_id)
 
     if not session:
         return
+    session['last_activity'] = time.time()
 
     try:
-        client.website.mark_messages_read_in_conversation(websiteId, session_id,
-            {"from": "user", "origin": "chat", "fingerprints": [data["fingerprint"]]}
+        await asyncio.to_thread(
+            client.website.mark_messages_read_in_conversation,
+            websiteId,
+            session_id,
+            {"from": "user", "origin": "chat", "fingerprints": [data.get("fingerprint")]}
         )
-    except:
-        pass
+    except Exception as e:
+        logger.warning(f"Mark Crisp messages read failed: {e}")
 
-    if data["type"] == "text":
+    if data.get("type") == "text":
         flow = ['📠<b>消息推送</b>','']
-        flow.append(f"🧾<b>消息内容</b>：{data['content']}")
+        content = data.get("content", "")
+        flow.append(f"🧾<b>消息内容</b>：{content}")
 
-        result, autoreply = getKey(data["content"])
+        result, autoreply = getKey(content)
         if result:
             flow.append(f"\n💡<b>自动回复</b>：{autoreply}")
         elif openai is not None and session.get("enableAI"):
             try:
-                response = openai.chat.completions.create(
-                    model="gpt-3.5-turbo",
+                response = await asyncio.to_thread(
+                    openai.chat.completions.create,
+                    model=openai_model,
                     messages=[
                         {"role": "system", "content": payload},
-                        {"role": "user", "content": data["content"]}
+                        {"role": "user", "content": content}
                     ],
-                    timeout=15 
+                    timeout=15
                 )
                 autoreply = response.choices[0].message.content
                 flow.append(f"\n💡<b>自动回复</b>：{autoreply}")
@@ -128,7 +156,7 @@ async def sendMessage(data):
                 "user": {"nickname": '智能客服', "avatar": 'https://img.ixintu.com/download/jpg/20210125/8bff784c4e309db867d43785efde1daf_512_512.jpg'}
             }
             try:
-                client.website.send_message_in_conversation(websiteId, session_id, query)
+                await asyncio.to_thread(client.website.send_message_in_conversation, websiteId, session_id, query)
             except Exception as e:
                 logger.error(f"Push to Crisp Error: {e}")
 
@@ -143,17 +171,18 @@ async def sendMessage(data):
             if "Message thread not found" in str(e):
                 try:
                     nickname = session.get('nickname') or data.get("user", {}).get("nickname", "未知用户")
-                    topic = await bot_obj.create_forum_topic(groupId, nickname)
-                    await bot_obj.send_message(groupId, text_content, message_thread_id=topic.message_thread_id)
-                    bot_data[session_id]['topicId'] = topic.message_thread_id
-                    bot_data[session_id]['nickname'] = nickname
+                    metas = await asyncio.to_thread(getMetas, session_id)
+                    session = await rebuildTopic(bot_obj, bot_data, session_id, session, nickname, metas)
+                    await bot_obj.send_message(groupId, text_content, message_thread_id=session["topicId"])
                 except Exception as ex:
                     logger.error(f"Rebuild Topic Error: {ex}")
             else:
                 logger.error(f"Send Message Error: {e}")
 
-    elif data["type"] == "file" and "image" in str(data["content"].get("type", "")):
-        photo_url = data["content"]["url"]
+    elif data.get("type") == "file" and "image" in str(data.get("content", {}).get("type", "")):
+        photo_url = data["content"].get("url")
+        if not photo_url:
+            return
         try:
             await bot_obj.send_photo(
                 groupId,
@@ -164,10 +193,9 @@ async def sendMessage(data):
             if "Message thread not found" in str(e):
                 try:
                     nickname = session.get('nickname') or data.get("user", {}).get("nickname", "未知用户")
-                    topic = await bot_obj.create_forum_topic(groupId, nickname)
-                    await bot_obj.send_photo(groupId, photo_url, message_thread_id=topic.message_thread_id)
-                    bot_data[session_id]['topicId'] = topic.message_thread_id
-                    bot_data[session_id]['nickname'] = nickname
+                    metas = await asyncio.to_thread(getMetas, session_id)
+                    session = await rebuildTopic(bot_obj, bot_data, session_id, session, nickname, metas)
+                    await bot_obj.send_photo(groupId, photo_url, message_thread_id=session["topicId"])
                 except Exception as ex:
                     logger.error(f"Image Rebuild Error: {ex}")
             else:
@@ -205,10 +233,13 @@ async def disconnect():
 
 @sio.on("message:send")
 async def messageForward(data):
-    if data["website_id"] != websiteId:
+    if data.get("website_id") != websiteId:
         return
-    await createSession(data)
-    await sendMessage(data)
+    if not data.get("session_id"):
+        return
+    async with get_session_lock(data["session_id"]):
+        await createSession(callbackContext, data)
+        await sendMessage(callbackContext, data)
 
 def getCrispConnectEndpoints():
     try:
@@ -232,7 +263,7 @@ async def exec(context: ContextTypes.DEFAULT_TYPE):
     
     while True:
         try:
-            endpoint = getCrispConnectEndpoints()
+            endpoint = await asyncio.to_thread(getCrispConnectEndpoints)
             if endpoint:
                 if not sio.connected:
                     await sio.connect(
@@ -243,6 +274,19 @@ async def exec(context: ContextTypes.DEFAULT_TYPE):
                 await sio.wait()
             else:
                 await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            logger.info("RTM Daemon Stopping")
+            raise
         except Exception as e:
             logger.error(f"RTM Exec Error: {e}")
             await asyncio.sleep(20)
+
+async def shutdown():
+    if sio.connected:
+        try:
+            await asyncio.wait_for(sio.disconnect(), timeout=3)
+            await asyncio.sleep(0.1)
+        except asyncio.TimeoutError:
+            logger.warning("RTM disconnect timed out")
+        except Exception as e:
+            logger.warning(f"RTM disconnect failed: {e}")

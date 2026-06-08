@@ -43,3 +43,6 @@ jobs:
 
       - name: Build image and push(py3.12)
         run: docker buildx build -t ${{ secrets.FAQ_DOCKERHUB_USERNAME }}/crisp-telegram-bot:py3.12 --platform linux/amd64,linux/arm64 --progress plain --push -f dockerfiles/py3.12/Dockerfile .
+
+      - name: Build image and push(py3.14)
+        run: docker buildx build -t ${{ secrets.FAQ_DOCKERHUB_USERNAME }}/crisp-telegram-bot:py3.14 --platform linux/amd64,linux/arm64 --progress plain --push -f dockerfiles/py3.14/Dockerfile .

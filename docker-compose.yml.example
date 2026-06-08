@@ -8,6 +8,7 @@ services:
       TZ: Asia/Shanghai
       BOT_TOKEN: 12345:abcdefghijklm
       BOT_GROUPID: -123456
+      NETWORK_PREFER_IPV4: "true"
       EasyImages_apiUrl: "http://127.0.0.1/api/index.php"
       EasyImages_apiToken: "token"
       CRISP_ID: aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa
@@ -16,7 +17,9 @@ services:
       AUTOREPLY: |
         \0  '在吗|你好' : '欢迎使用客服系统，请等待客服回复你~'
         \0  '关键字1|关键字2' : '自动应答语A'
-      OPENAI_APIKEY: 
+      OPENAI_APIKEY:
+      OPENAI_BASEURL: "https://api.openai.com/v1"
+      OPENAI_MODEL: "gpt-4o-mini"
       OPENAI_PAYLOAD: |
         \0    作为简体中文客服，请始终以温柔、耐心的态度回复所有消息，确保每次交互中用户感受到尊重和理解。
         \0    请仅使用纯文本回复，不得使用其他语言或格式化语法。
