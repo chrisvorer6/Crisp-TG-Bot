@@ -12,24 +12,24 @@ Python 版本需求 >= 3.10。Debian 13 部署推荐使用官方 Python 3.13；P
 - 基于 Telegram 话题群将消息分栏
 - 自动推送文字、图片到指定聊天
 - 支持回复后推送回对应客户
+- 支持从 Telegram 回复图片到 Crisp（需配置 EasyImages 图床）
 - 兼容V2B以显示套餐信息
 - 关键词回复以及基于GPT的智能回复
-
-## 计划功能
-- 回复图片功能（需要Crisp订阅）
 
 ## 常规使用
 ```
 # apt install git 如果你没有git的话
 git clone https://github.com/chrisvorer6/Crisp-TG-Bot.git
 # 进程常驻可参考 screen 或 nohup 或 systemctl
-# 你需要安装好 pip3 的包管理
 cd Crisp-Telegram-Bot
-pip3 install -r requirements.txt
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
 cp config.yml.example config.yml
 nano config.yml
 # 根据注释中的内容修改配置
-python3 bot.py
+python bot.py
 ```
 
 ## Debian 13 / Python 3.13 部署
@@ -117,7 +117,7 @@ openai:
 
 ## 申请 Telegram Bot Token
 
-1. 私聊 [https://t.me/BotFather](https://https://t.me/BotFather)
+1. 私聊 [https://t.me/BotFather](https://t.me/BotFather)
 2. 输入 `/newbot`，并为你的bot起一个**响亮**的名字
 3. 接着为你的bot设置一个username，但是一定要以bot结尾，例如：`v2board_bot`
 4. 最后你就能得到bot的token了，看起来应该像这样：`123456789:gaefadklwdqojdoiqwjdiwqdo`

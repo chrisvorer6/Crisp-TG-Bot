@@ -56,22 +56,6 @@ def load_all_sessions():
         ).fetchall()
     return {row[0]: row_to_session(row) for row in rows}
 
-def get_session_by_topic(topic_id):
-    with connection() as conn:
-        row = conn.execute(
-            """
-            SELECT session_id, topic_id, message_id, enable_ai, nickname, last_activity
-            FROM sessions
-            WHERE topic_id = ?
-            """,
-            (topic_id,)
-        ).fetchone()
-    if not row:
-        return None
-    session = row_to_session(row)
-    session["sessionId"] = row[0]
-    return session
-
 def upsert_session(session_id, topic_id, message_id, enable_ai, nickname, last_activity):
     with connection() as conn:
         # Keep topic_id unique even when a stale row still points at a rebuilt topic.

@@ -269,7 +269,7 @@ class RTMDaemon:
             "tier": "plugin",
             "username": config["crisp"]["id"],
             "password": config["crisp"]["key"],
-            "events": ["message:send", "session:set_data"]
+            "events": ["message:send"]
         })
 
     async def unauthorized(self, data):

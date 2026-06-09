@@ -1,14 +1,5 @@
 #!/bin/sh
 
-# conver_to_array(){
-#     local BOT_SEND_ID_env=$1
-#     local IFS=","
-#     str=""
-#     for send_id in ${BOT_SEND_ID_env};do
-#         str="$str    - ${send_id}\n"
-#     done
-#     result=`echo -e "${str}"`
-# }
 AUTOREPLY=`printf '%b' "${AUTOREPLY}"`
 OPENAI_PAYLOAD=`printf '%b' "${OPENAI_PAYLOAD}"`
 NETWORK_PREFER_IPV4=${NETWORK_PREFER_IPV4:-true}
@@ -16,8 +7,6 @@ STORAGE_SQLITE_PATH=${STORAGE_SQLITE_PATH:-data/sessions.sqlite3}
 OPENAI_BASEURL=${OPENAI_BASEURL:-https://api.openai.com/v1}
 OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
 
-# if [ ! -e "/Crisp-Telegram-Bot/config.yml" ]; then
-# conver_to_array ${BOT_SEND_ID}
 cat > /Crisp-Telegram-Bot/config.yml << EOF
 bot:
   token: ${BOT_TOKEN}
@@ -42,5 +31,4 @@ openai:
   payload: |
 ${OPENAI_PAYLOAD}
 EOF
-# fi
 exec "$@"

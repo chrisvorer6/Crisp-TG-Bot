@@ -1,7 +1,6 @@
 FROM python:3.11-alpine AS build
 ADD requirements.txt /build/requirements.txt
 WORKDIR /build
-RUN apk update
 RUN apk add --no-cache --virtual .build-deps git build-base libffi-dev libstdc++
 RUN pip install --upgrade pip
 RUN pip install --no-cache-dir -r ./requirements.txt
