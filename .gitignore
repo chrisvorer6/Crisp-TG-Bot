@@ -2,6 +2,7 @@
 *.yml
 *.pem
 bot_persistence.pickle
+data/
 test/
 # vscode environment
 .vscode/

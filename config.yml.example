@@ -6,6 +6,9 @@ bot:
 network:
   # 优先使用 IPv4，IPv4 不可达时仍保留 IPv6 兜底
   preferIPv4: true
+storage:
+  # SQLite 会话状态数据库路径
+  sqlitePath: "data/sessions.sqlite3"
 crisp:
   # 插件 ID
   id:

@@ -91,6 +91,17 @@ network:
 
 如果你的 Debian 13 服务器 IPv6 路由质量更好，可以设置为 `false`，让系统按默认 DNS 结果选择连接地址。
 
+### 会话存储
+
+会话状态使用 SQLite 保存，默认路径：
+
+```yaml
+storage:
+  sqlitePath: "data/sessions.sqlite3"
+```
+
+SQLite 会保存 Crisp `session_id` 与 Telegram `topicId/messageId` 的映射、AI 开关、昵称和最后活跃时间。旧版 `bot_persistence.pickle` 不再作为会话状态来源；升级后客户再次发送消息时会自动写入新的 SQLite 记录。
+
 ### OpenAI 自动回复配置
 
 未配置 `openai.apiKey` 时，AI 自动回复会自动禁用，人工客服转发不受影响。
