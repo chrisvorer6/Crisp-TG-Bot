@@ -11,6 +11,10 @@ cat > /Crisp-Telegram-Bot/config.yml << EOF
 bot:
   token: ${BOT_TOKEN}
   groupId: ${BOT_GROUPID}
+  operatorName: ${BOT_OPERATOR_NAME:-人工客服}
+  operatorAvatar: ${BOT_OPERATOR_AVATAR}
+  aiName: ${BOT_AI_NAME:-智能客服}
+  aiAvatar: ${BOT_AI_AVATAR}
 network:
   preferIPv4: ${NETWORK_PREFER_IPV4}
 storage:

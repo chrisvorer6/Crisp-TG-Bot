@@ -3,6 +3,12 @@ bot:
   token: 1234:1234567890abcdef
   # 发送至群
   groupId: 0
+  # Crisp 中显示的人工客服昵称和头像；头像留空则使用 Crisp 默认头像
+  operatorName: "人工客服"
+  operatorAvatar:
+  # Crisp 中显示的 AI 客服昵称和头像；头像留空则使用 Crisp 默认头像
+  aiName: "智能客服"
+  aiAvatar:
 network:
   # 优先使用 IPv4，IPv4 不可达时仍保留 IPv6 兜底
   preferIPv4: true

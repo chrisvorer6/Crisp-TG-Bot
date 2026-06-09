@@ -8,6 +8,10 @@ services:
       TZ: Asia/Shanghai
       BOT_TOKEN: 12345:abcdefghijklm
       BOT_GROUPID: -123456
+      BOT_OPERATOR_NAME: "人工客服"
+      BOT_OPERATOR_AVATAR:
+      BOT_AI_NAME: "智能客服"
+      BOT_AI_AVATAR:
       NETWORK_PREFER_IPV4: "true"
       STORAGE_SQLITE_PATH: "data/sessions.sqlite3"
       EasyImages_apiUrl: "http://127.0.0.1/api/index.php"
