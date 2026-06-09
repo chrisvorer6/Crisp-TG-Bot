@@ -27,6 +27,13 @@ def get_session_lock(session_id):
         session_locks[session_id] = lock
     return lock
 
+def forget_sessions(session_ids):
+    for session_id in session_ids:
+        session_locks.pop(session_id, None)
+
+def get_topic_index(bot_data):
+    return bot_data.setdefault('_topic_session_index', {})
+
 def getKey(content: str):
     if len(config.get("autoreply", {})) > 0:
         for x in config["autoreply"]:
@@ -74,6 +81,11 @@ async def rebuildTopic(bot_obj, bot_data, session_id, session, nickname, metas):
         'nickname': nickname,
         'last_activity': time.time()
     }
+    topic_index = get_topic_index(bot_data)
+    old_topic_id = session.get('topicId')
+    if old_topic_id is not None:
+        topic_index.pop(str(old_topic_id), None)
+    topic_index[str(topic.message_thread_id)] = session_id
     return bot_data[session_id]
 
 async def createSession(context, data):
@@ -92,6 +104,8 @@ async def createSession(context, data):
             logger.error(f"Create Topic Error: {e}")
     else:
         session.setdefault('last_activity', time.time())
+        if session.get('topicId') is not None:
+            get_topic_index(bot_data)[str(session['topicId'])] = session_id
         try:
             await bot_obj.edit_message_text(
                 metas,
@@ -203,44 +217,6 @@ async def sendMessage(context, data):
         except Exception as e:
             logger.error(f"Unknown Photo Error: {e}")
 
-sio = socketio.AsyncClient(
-    reconnection=True, 
-    reconnection_attempts=0,     
-    reconnection_delay=10,        
-    reconnection_delay_max=60,    
-    randomization_factor=0.5,     
-    logger=False, 
-    engineio_logger=False
-)
-
-@sio.on("connect")
-async def connect():
-    logger.info("Crisp RTM Connected")
-    await sio.emit("authentication", {
-        "tier": "plugin",
-        "username": config["crisp"]["id"],
-        "password": config["crisp"]["key"],
-        "events": ["message:send", "session:set_data"]
-    })
-
-@sio.on("unauthorized")
-async def unauthorized(data):
-    logger.error(f'Auth Failed: {data}')
-
-@sio.event
-async def disconnect():
-    logger.warning("RTM Disconnected")
-
-@sio.on("message:send")
-async def messageForward(data):
-    if data.get("website_id") != websiteId:
-        return
-    if not data.get("session_id"):
-        return
-    async with get_session_lock(data["session_id"]):
-        await createSession(callbackContext, data)
-        await sendMessage(callbackContext, data)
-
 def getCrispConnectEndpoints():
     try:
         url = "https://api.crisp.chat/v1/plugin/connect/endpoints"
@@ -255,38 +231,86 @@ def getCrispConnectEndpoints():
         logger.error(f"Get Endpoints Error: {e}")
         return None
 
+class RTMDaemon:
+    def __init__(self, context):
+        self.context = context
+        self.sio = socketio.AsyncClient(
+            reconnection=True,
+            reconnection_attempts=0,
+            reconnection_delay=10,
+            reconnection_delay_max=60,
+            randomization_factor=0.5,
+            logger=False,
+            engineio_logger=False
+        )
+        self.sio.on("connect", handler=self.connect)
+        self.sio.on("unauthorized", handler=self.unauthorized)
+        self.sio.on("message:send", handler=self.messageForward)
+        self.sio.on("disconnect", handler=self.disconnect)
+
+    async def connect(self):
+        logger.info("Crisp RTM Connected")
+        await self.sio.emit("authentication", {
+            "tier": "plugin",
+            "username": config["crisp"]["id"],
+            "password": config["crisp"]["key"],
+            "events": ["message:send", "session:set_data"]
+        })
+
+    async def unauthorized(self, data):
+        logger.error(f'Auth Failed: {data}')
+
+    async def disconnect(self):
+        logger.warning("RTM Disconnected")
+
+    async def messageForward(self, data):
+        if data.get("website_id") != websiteId:
+            return
+        if not data.get("session_id"):
+            return
+        async with get_session_lock(data["session_id"]):
+            await createSession(self.context, data)
+            await sendMessage(self.context, data)
+
+    async def run(self):
+        logger.info("RTM Daemon Started")
+        while True:
+            try:
+                endpoint = await asyncio.to_thread(getCrispConnectEndpoints)
+                if endpoint:
+                    if not self.sio.connected:
+                        await self.sio.connect(
+                            endpoint,
+                            transports="websocket",
+                            wait_timeout=30,
+                        )
+                    await self.sio.wait()
+                else:
+                    await asyncio.sleep(30)
+            except asyncio.CancelledError:
+                logger.info("RTM Daemon Stopping")
+                raise
+            except Exception as e:
+                logger.error(f"RTM Exec Error: {e}")
+                await asyncio.sleep(20)
+
+    async def shutdown(self):
+        if self.sio.connected:
+            try:
+                await asyncio.wait_for(self.sio.disconnect(), timeout=3)
+                await asyncio.sleep(0.1)
+            except asyncio.TimeoutError:
+                logger.warning("RTM disconnect timed out")
+            except Exception as e:
+                logger.warning(f"RTM disconnect failed: {e}")
+
+rtm_daemon = None
+
 async def exec(context: ContextTypes.DEFAULT_TYPE):
-    global callbackContext
-    callbackContext = context
-    
-    logger.info("RTM Daemon Started")
-    
-    while True:
-        try:
-            endpoint = await asyncio.to_thread(getCrispConnectEndpoints)
-            if endpoint:
-                if not sio.connected:
-                    await sio.connect(
-                        endpoint,
-                        transports="websocket",
-                        wait_timeout=30,
-                    )
-                await sio.wait()
-            else:
-                await asyncio.sleep(30)
-        except asyncio.CancelledError:
-            logger.info("RTM Daemon Stopping")
-            raise
-        except Exception as e:
-            logger.error(f"RTM Exec Error: {e}")
-            await asyncio.sleep(20)
+    global rtm_daemon
+    rtm_daemon = RTMDaemon(context)
+    await rtm_daemon.run()
 
 async def shutdown():
-    if sio.connected:
-        try:
-            await asyncio.wait_for(sio.disconnect(), timeout=3)
-            await asyncio.sleep(0.1)
-        except asyncio.TimeoutError:
-            logger.warning("RTM disconnect timed out")
-        except Exception as e:
-            logger.warning(f"RTM disconnect failed: {e}")
+    if rtm_daemon is not None:
+        await rtm_daemon.shutdown()

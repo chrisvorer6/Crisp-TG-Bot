@@ -1,6 +1,7 @@
 import os
 import sys
 import asyncio
+import io
 import yaml
 import logging
 import requests
@@ -92,6 +93,8 @@ async def cleanup_sessions(context: ContextTypes.DEFAULT_TYPE):
     expiry_seconds = 7 * 24 * 3600 
     sessions_to_delete = []
     for session_id, data in list(context.bot_data.items()):
+        if not isinstance(session_id, str) or session_id.startswith('_'):
+            continue
         if not isinstance(data, dict):
             continue
         if 'last_activity' not in data:
@@ -102,6 +105,15 @@ async def cleanup_sessions(context: ContextTypes.DEFAULT_TYPE):
     if sessions_to_delete:
         for sid in sessions_to_delete:
             del context.bot_data[sid]
+        topic_index = context.bot_data.get('_topic_session_index', {})
+        for topic_id, session_id in list(topic_index.items()):
+            if session_id in sessions_to_delete:
+                del topic_index[topic_id]
+        try:
+            import handler
+            handler.forget_sessions(sessions_to_delete)
+        except Exception as exc:
+            logger.warning("Cleanup session state failed: %s", exc)
 
 async def log_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.exception("Unhandled Telegram update error: %s", context.error)
@@ -147,6 +159,29 @@ async def stop_background_tasks(application):
         except asyncio.TimeoutError:
             logger.warning("Timed out waiting for background tasks to stop")
 
+async def forward_reply_to_crisp(session_id, session, text):
+    session['last_activity'] = time.time()
+    query = {
+        "type": "text",
+        "content": text,
+        "from": "operator",
+        "origin": "chat",
+        "user": {
+            "nickname": '人工客服',
+            "avatar": 'https://bpic.51yuansu.com/pic3/cover/03/47/92/65e3b3b1eb909_800.jpg'
+        }
+    }
+    try:
+        await asyncio.to_thread(
+            client.website.send_message_in_conversation,
+            config['crisp']['website'],
+            session_id,
+            query
+        )
+        logger.info("Telegram reply forwarded to Crisp session %s", session_id)
+    except Exception as exc:
+        logger.error("Send operator reply to Crisp failed: %s", exc)
+
 async def onReply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = update.effective_message
     if not msg or msg.chat_id != config['bot']['groupId']:
@@ -155,32 +190,30 @@ async def onReply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     if not msg.text:
         return
-    for sessionId, session in list(context.bot_data.items()):
-        if not isinstance(session, dict):
-            continue
-        if session.get('topicId') == msg.message_thread_id:
-            session['last_activity'] = time.time()
-            query = {
-                "type": "text",
-                "content": msg.text,
-                "from": "operator",
-                "origin": "chat",
-                "user": {
-                    "nickname": '人工客服',
-                    "avatar": 'https://bpic.51yuansu.com/pic3/cover/03/47/92/65e3b3b1eb909_800.jpg'
-                }
-            }
-            try:
-                await asyncio.to_thread(
-                    client.website.send_message_in_conversation,
-                    config['crisp']['website'],
-                    sessionId,
-                    query
-                )
-                logger.info("Telegram reply forwarded to Crisp session %s", sessionId)
-            except Exception as exc:
-                logger.error("Send operator reply to Crisp failed: %s", exc)
+
+    topic_id = str(msg.message_thread_id)
+    topic_index = context.bot_data.setdefault('_topic_session_index', {})
+    if topic_id in topic_index:
+        session_id = topic_index[topic_id]
+        if session_id is None:
             return
+        session = context.bot_data.get(session_id)
+        if isinstance(session, dict) and session.get('topicId') == msg.message_thread_id:
+            await forward_reply_to_crisp(session_id, session, msg.text)
+            return
+        topic_index.pop(topic_id, None)
+
+    for candidate_id, candidate_session in list(context.bot_data.items()):
+        if isinstance(candidate_id, str) and candidate_id.startswith('_'):
+            continue
+        if not isinstance(candidate_session, dict):
+            continue
+        if candidate_session.get('topicId') == msg.message_thread_id:
+            topic_index[topic_id] = candidate_id
+            await forward_reply_to_crisp(candidate_id, candidate_session, msg.text)
+            return
+
+    topic_index[topic_id] = None
     logger.warning("No Crisp session matched Telegram topic %s", msg.message_thread_id)
 
 EASYIMAGES_API_URL = config.get('easyimages', {}).get('apiUrl', '')
@@ -197,6 +230,7 @@ async def handleImage(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     if not EASYIMAGES_API_URL or not EASYIMAGES_API_TOKEN:
         logger.warning("EasyImages is not configured; image reply ignored.")
+        await msg.reply_text("图片未发送：EasyImages 图床未配置。")
         return
     try:
         file = await context.bot.get_file(file_id)
@@ -208,12 +242,16 @@ async def handleImage(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await asyncio.to_thread(send_markdown_to_client, session_id, markdown_link)
     except Exception as exc:
         logger.error("Handle Telegram image failed: %s", exc)
+        try:
+            await msg.reply_text("图片发送失败，请稍后重试或联系管理员检查图床配置。")
+        except Exception as reply_exc:
+            logger.warning("Send image failure notice failed: %s", reply_exc)
 
 def upload_image_to_easyimages(file_url):
     try:
-        response = requests.get(file_url, stream=True, timeout=10)
+        response = requests.get(file_url, timeout=10)
         response.raise_for_status()
-        files = {'image': ('image.jpg', response.raw, 'image/jpeg'), 'token': (None, EASYIMAGES_API_TOKEN)}
+        files = {'image': ('image.jpg', io.BytesIO(response.content), 'image/jpeg'), 'token': (None, EASYIMAGES_API_TOKEN)}
         res = requests.post(EASYIMAGES_API_URL, files=files, timeout=20)
         res_data = res.json()
         if res_data.get("result") == "success":
@@ -223,10 +261,17 @@ def upload_image_to_easyimages(file_url):
         raise
 
 def get_target_session_id(context, thread_id):
+    topic_index = context.bot_data.get('_topic_session_index', {})
+    session_id = topic_index.get(str(thread_id))
+    if session_id and isinstance(context.bot_data.get(session_id), dict):
+        return session_id
     for session_id, session_data in context.bot_data.items():
+        if not isinstance(session_id, str) or session_id.startswith('_'):
+            continue
         if not isinstance(session_data, dict):
             continue
         if session_data.get('topicId') == thread_id:
+            topic_index[str(thread_id)] = session_id
             return session_id
     return None
 
@@ -247,6 +292,9 @@ async def onChange(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await query.answer('无法设置此功能')
     else:
         data = query.data.split(',')
+        if len(data) < 2:
+            await query.answer('数据异常')
+            return
         session = context.bot_data.get(data[0])
         if session:
             session['last_activity'] = time.time()
