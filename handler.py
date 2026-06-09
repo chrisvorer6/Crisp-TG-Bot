@@ -7,6 +7,7 @@ import asyncio
 import time
 from telegram.ext import ContextTypes
 from telegram.error import BadRequest
+import session_store
 
 config = bot.config
 client = bot.client
@@ -73,19 +74,29 @@ async def rebuildTopic(bot_obj, bot_data, session_id, session, nickname, metas):
         message_thread_id=topic.message_thread_id,
         reply_markup=changeButton(session_id, enableAI)
     )
+    now = time.time()
     bot_data[session_id] = {
         **session,
         'topicId': topic.message_thread_id,
         'messageId': msg.message_id,
         'enableAI': enableAI,
         'nickname': nickname,
-        'last_activity': time.time()
+        'last_activity': now
     }
     topic_index = get_topic_index(bot_data)
     old_topic_id = session.get('topicId')
     if old_topic_id is not None:
         topic_index.pop(str(old_topic_id), None)
     topic_index[str(topic.message_thread_id)] = session_id
+    await asyncio.to_thread(
+        session_store.upsert_session,
+        session_id,
+        topic.message_thread_id,
+        msg.message_id,
+        enableAI,
+        nickname,
+        now
+    )
     return bot_data[session_id]
 
 async def createSession(context, data):
@@ -103,7 +114,8 @@ async def createSession(context, data):
         except Exception as e:
             logger.error(f"Create Topic Error: {e}")
     else:
-        session.setdefault('last_activity', time.time())
+        now = time.time()
+        session.setdefault('last_activity', now)
         if session.get('topicId') is not None:
             get_topic_index(bot_data)[str(session['topicId'])] = session_id
         try:
@@ -127,7 +139,9 @@ async def sendMessage(context, data):
 
     if not session:
         return
-    session['last_activity'] = time.time()
+    now = time.time()
+    session['last_activity'] = now
+    await asyncio.to_thread(session_store.touch_session, session_id, now)
 
     try:
         await asyncio.to_thread(
@@ -234,6 +248,7 @@ def getCrispConnectEndpoints():
 class RTMDaemon:
     def __init__(self, context):
         self.context = context
+        self.stopping = False
         self.sio = socketio.AsyncClient(
             reconnection=True,
             reconnection_attempts=0,
@@ -261,7 +276,10 @@ class RTMDaemon:
         logger.error(f'Auth Failed: {data}')
 
     async def disconnect(self):
-        logger.warning("RTM Disconnected")
+        if self.stopping:
+            logger.info("RTM Disconnected")
+        else:
+            logger.warning("RTM Disconnected")
 
     async def messageForward(self, data):
         if data.get("website_id") != websiteId:
@@ -288,6 +306,7 @@ class RTMDaemon:
                 else:
                     await asyncio.sleep(30)
             except asyncio.CancelledError:
+                self.stopping = True
                 logger.info("RTM Daemon Stopping")
                 raise
             except Exception as e:
@@ -295,6 +314,7 @@ class RTMDaemon:
                 await asyncio.sleep(20)
 
     async def shutdown(self):
+        self.stopping = True
         if self.sio.connected:
             try:
                 await asyncio.wait_for(self.sio.disconnect(), timeout=3)

@@ -13,12 +13,27 @@ sys.modules.setdefault("bot", sys.modules[__name__])
 from openai import OpenAI
 from crisp_api import Crisp
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import Application, Defaults, MessageHandler, filters, ContextTypes, CallbackQueryHandler, PicklePersistence
+from telegram.ext import Application, Defaults, MessageHandler, filters, ContextTypes, CallbackQueryHandler
+
+import session_store
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logging.getLogger("httpx").setLevel(logging.WARNING)
+
+
+class SuppressEngineIOPacketQueueFilter(logging.Filter):
+    def filter(self, record):
+        return "packet queue is empty, aborting" not in record.getMessage()
+
+
+packet_queue_filter = SuppressEngineIOPacketQueueFilter()
+for log_name in ("engineio", "engineio.client"):
+    logging.getLogger(log_name).addFilter(packet_queue_filter)
+for handler in logging.getLogger().handlers:
+    handler.addFilter(packet_queue_filter)
+
 logger = logging.getLogger(__name__)
 background_tasks = []
 
@@ -45,6 +60,8 @@ missing_config = [
 if missing_config:
     logger.error("Missing required config values: %s", ", ".join(missing_config))
     exit(1)
+
+session_store.init(config.get('storage', {}).get('sqlitePath', 'data/sessions.sqlite3'))
 
 if config.get('network', {}).get('preferIPv4', True):
     orig_getaddrinfo = socket.getaddrinfo
@@ -105,6 +122,7 @@ async def cleanup_sessions(context: ContextTypes.DEFAULT_TYPE):
     if sessions_to_delete:
         for sid in sessions_to_delete:
             del context.bot_data[sid]
+        await asyncio.to_thread(session_store.delete_sessions, sessions_to_delete)
         topic_index = context.bot_data.get('_topic_session_index', {})
         for topic_id, session_id in list(topic_index.items()):
             if session_id in sessions_to_delete:
@@ -116,13 +134,33 @@ async def cleanup_sessions(context: ContextTypes.DEFAULT_TYPE):
             logger.warning("Cleanup session state failed: %s", exc)
 
 async def log_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    logger.exception("Unhandled Telegram update error: %s", context.error)
+    error = context.error
+    if error is None:
+        logger.error("Unhandled Telegram update error without exception context")
+        return
+    error_name = f"{type(error).__module__}.{type(error).__name__}"
+    if "RemoteProtocolError" in error_name:
+        logger.warning("Temporary Telegram polling connection error: %s", error)
+        return
+    logger.error("Unhandled Telegram update error: %s", error, exc_info=error)
 
 class RuntimeContext:
     def __init__(self, application):
         self.application = application
         self.bot = application.bot
         self.bot_data = application.bot_data
+
+async def restore_sessions(application):
+    sessions = await asyncio.to_thread(session_store.load_all_sessions)
+    topic_index = {}
+    for session_id, session in sessions.items():
+        application.bot_data[session_id] = session
+        topic_id = session.get('topicId')
+        if topic_id is not None:
+            topic_index[str(topic_id)] = session_id
+    application.bot_data['_topic_session_index'] = topic_index
+    if sessions:
+        logger.info("Restored %s sessions from SQLite", len(sessions))
 
 async def cleanup_sessions_loop(context: RuntimeContext):
     await asyncio.sleep(60)
@@ -134,6 +172,7 @@ async def start_background_tasks(application):
     import handler
 
     application.bot_data.pop('_background_tasks', None)
+    await restore_sessions(application)
     context = RuntimeContext(application)
     global background_tasks
     background_tasks = [
@@ -160,7 +199,8 @@ async def stop_background_tasks(application):
             logger.warning("Timed out waiting for background tasks to stop")
 
 async def forward_reply_to_crisp(session_id, session, text):
-    session['last_activity'] = time.time()
+    now = time.time()
+    session['last_activity'] = now
     query = {
         "type": "text",
         "content": text,
@@ -178,6 +218,7 @@ async def forward_reply_to_crisp(session_id, session, text):
             session_id,
             query
         )
+        await asyncio.to_thread(session_store.touch_session, session_id, now)
         logger.info("Telegram reply forwarded to Crisp session %s", session_id)
     except Exception as exc:
         logger.error("Send operator reply to Crisp failed: %s", exc)
@@ -238,7 +279,9 @@ async def handleImage(update: Update, context: ContextTypes.DEFAULT_TYPE):
         markdown_link = f"![Image]({uploaded_url})"
         session_id = get_target_session_id(context, msg.message_thread_id)
         if session_id:
-            context.bot_data[session_id]['last_activity'] = time.time()
+            now = time.time()
+            context.bot_data[session_id]['last_activity'] = now
+            await asyncio.to_thread(session_store.touch_session, session_id, now)
             await asyncio.to_thread(send_markdown_to_client, session_id, markdown_link)
     except Exception as exc:
         logger.error("Handle Telegram image failed: %s", exc)
@@ -297,9 +340,11 @@ async def onChange(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             return
         session = context.bot_data.get(data[0])
         if session:
-            session['last_activity'] = time.time()
+            now = time.time()
+            session['last_activity'] = now
             is_ai_enabled = data[1].lower() == 'true'
             session["enableAI"] = not is_ai_enabled
+            await asyncio.to_thread(session_store.set_enable_ai, data[0], session["enableAI"], now)
             await query.answer()
             try:
                  await query.edit_message_reply_markup(changeButton(data[0], session["enableAI"]))
@@ -310,12 +355,10 @@ def main():
     try:
         asyncio.set_event_loop(asyncio.new_event_loop())
 
-        persistence = PicklePersistence(filepath="bot_persistence.pickle")
         app = (
             Application.builder()
             .token(config['bot']['token'])
             .defaults(Defaults(parse_mode='HTML'))
-            .persistence(persistence)
             .job_queue(None)
             .post_init(start_background_tasks)
             .post_shutdown(stop_background_tasks)
