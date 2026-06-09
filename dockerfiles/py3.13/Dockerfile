@@ -1,14 +1,15 @@
-FROM python:3.9-alpine AS build
+FROM python:3.13-alpine AS build
+
 ADD requirements.txt /build/requirements.txt
 WORKDIR /build
-RUN apk update
 RUN apk add --no-cache --virtual .build-deps git build-base libffi-dev libstdc++
 RUN pip install --upgrade pip
 RUN pip install --no-cache-dir -r ./requirements.txt
 RUN apk del .build-deps
 
-FROM python:3.9-alpine
-COPY --from=build /usr/local/lib/python3.9/site-packages /usr/local/lib/python3.9/site-packages
+FROM python:3.13-alpine
+
+COPY --from=build /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
 ADD / /Crisp-Telegram-Bot
 WORKDIR /Crisp-Telegram-Bot
 ENTRYPOINT [ "./docker-entrypoint.sh" ]

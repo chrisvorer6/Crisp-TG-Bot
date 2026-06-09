@@ -5,7 +5,7 @@
 一个简单的项目，让 Crisp 客服系统支持透过 Telegram Bot 来快速回复。  
 使用反馈、功能定制可加群：[https://t.me/dyaogroup](https://t.me/dyaogroup)
 
-Python 版本需求 >= 3.9，推荐 Python 3.14 以兼容 Debian 13 部署。
+Python 版本需求 >= 3.10。Debian 13 部署推荐使用官方 Python 3.13；Python 3.14 也已兼容，适合自行编译或前瞻环境。
 
 ## 现有功能
 - 基于 Crisp 客服系统
@@ -21,7 +21,7 @@ Python 版本需求 >= 3.9，推荐 Python 3.14 以兼容 Debian 13 部署。
 ## 常规使用
 ```
 # apt install git 如果你没有git的话
-git clone https://github.com/DyAxy/Crisp-Telegram-Bot.git
+git clone https://github.com/chrisvorer6/Crisp-TG-Bot.git
 # 进程常驻可参考 screen 或 nohup 或 systemctl
 # 你需要安装好 pip3 的包管理
 cd Crisp-Telegram-Bot
@@ -32,7 +32,7 @@ nano config.yml
 python3 bot.py
 ```
 
-## Debian 13 / Python 3.14 部署
+## Debian 13 / Python 3.13 部署
 
 ```bash
 sudo apt update

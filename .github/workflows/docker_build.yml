@@ -32,9 +32,6 @@ jobs:
       - run: docker buildx create --name builder --driver docker-container --platform linux/amd64,linux/arm64 --use
       - run: docker buildx inspect --bootstrap
 
-      - name: Build image and push(py3.9)
-        run: docker buildx build -t ${{ secrets.FAQ_DOCKERHUB_USERNAME }}/crisp-telegram-bot:latest -t ${{ secrets.FAQ_DOCKERHUB_USERNAME }}/crisp-telegram-bot:py3.9 --platform linux/amd64,linux/arm64 --progress plain --push -f dockerfiles/py3.9/Dockerfile .
-
       - name: Build image and push(py3.10)
         run: docker buildx build -t ${{ secrets.FAQ_DOCKERHUB_USERNAME }}/crisp-telegram-bot:py3.10 --platform linux/amd64,linux/arm64 --progress plain --push -f dockerfiles/py3.10/Dockerfile .
 
@@ -43,6 +40,9 @@ jobs:
 
       - name: Build image and push(py3.12)
         run: docker buildx build -t ${{ secrets.FAQ_DOCKERHUB_USERNAME }}/crisp-telegram-bot:py3.12 --platform linux/amd64,linux/arm64 --progress plain --push -f dockerfiles/py3.12/Dockerfile .
+
+      - name: Build image and push(py3.13)
+        run: docker buildx build -t ${{ secrets.FAQ_DOCKERHUB_USERNAME }}/crisp-telegram-bot:latest -t ${{ secrets.FAQ_DOCKERHUB_USERNAME }}/crisp-telegram-bot:py3.13 --platform linux/amd64,linux/arm64 --progress plain --push -f dockerfiles/py3.13/Dockerfile .
 
       - name: Build image and push(py3.14)
         run: docker buildx build -t ${{ secrets.FAQ_DOCKERHUB_USERNAME }}/crisp-telegram-bot:py3.14 --platform linux/amd64,linux/arm64 --progress plain --push -f dockerfiles/py3.14/Dockerfile .
